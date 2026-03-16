@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cowrie Log Viewer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap');
+
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0e14; --surface:#111820; --surface2:#18232f;
+  --border:#1e2d3d; --border2:#243347;
+  --text:#cdd6e0; --muted:#4a6278; --muted2:#2d4258;
+  --accent:#00d4aa; --info:#0096ff; --danger:#ff4757;
+  --warn:#ffb347; --purple:#a78bfa;
+  --mono:'JetBrains Mono',monospace;
+  --sans:'DM Sans',sans-serif;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--surface)}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+
+/* ── LAYOUT ── */
+.app{display:grid;grid-template-rows:52px 1fr;height:100vh}
+.header{
+  background:var(--surface);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:16px;padding:0 20px;
+}
+.logo{font-family:var(--mono);font-size:15px;font-weight:600;color:var(--accent)}
+.logo span{color:var(--muted)}
+.body{display:grid;grid-template-columns:260px 1fr;overflow:hidden}
+
+/* ── SIDEBAR ── */
+.sidebar{
+  background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.sidebar-section{padding:14px 16px;border-bottom:1px solid var(--border)}
+.sidebar-label{font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px}
+.file-list{flex:1;overflow-y:auto;padding:8px}
+.file-item{
+  font-family:var(--mono);font-size:11px;color:var(--muted);
+  padding:7px 10px;border-radius:5px;cursor:pointer;
+  transition:all .15s;border:1px solid transparent;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.file-item:hover{color:var(--accent);background:var(--surface2);border-color:var(--border2)}
+.file-item.active{color:var(--accent);background:var(--muted2);border-color:var(--accent)}
+
+/* upload zone */
+.upload-zone{
+  border:1.5px dashed var(--border2);border-radius:8px;
+  padding:16px 12px;text-align:center;cursor:pointer;
+  transition:all .2s;color:var(--muted);font-size:12px;
+}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);color:var(--accent);background:rgba(0,212,170,.04)}
+#file-input{display:none}
+
+/* filter chips */
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{
+  font-family:var(--mono);font-size:10px;padding:3px 9px;border-radius:4px;
+  border:1px solid var(--border2);background:transparent;color:var(--muted);
+  cursor:pointer;transition:all .15s;
+}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.chip.active{font-weight:600}
+.chip[data-cat="all"].active      {background:var(--accent);border-color:var(--accent);color:#000}
+.chip[data-cat="connect"].active  {background:var(--info);border-color:var(--info);color:#fff}
+.chip[data-cat="login_ok"].active {background:var(--accent);border-color:var(--accent);color:#000}
+.chip[data-cat="login_fail"].active{background:var(--danger);border-color:var(--danger);color:#fff}
+.chip[data-cat="cmd"].active      {background:var(--warn);border-color:var(--warn);color:#000}
+.chip[data-cat="kex"].active      {background:var(--purple);border-color:var(--purple);color:#000}
+.chip[data-cat="closed"].active   {background:var(--muted);border-color:var(--muted);color:#000}
+
+/* search */
+.search-wrap{position:relative}
+.search-wrap input{
+  width:100%;background:var(--bg);border:1px solid var(--border2);
+  color:var(--text);font-family:var(--mono);font-size:12px;
+  padding:7px 10px 7px 28px;border-radius:6px;outline:none;
+  transition:border-color .2s;
+}
+.search-wrap input:focus{border-color:var(--accent)}
+.search-icon{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--muted)}
+
+/* ── MAIN PANEL ── */
+.main{display:flex;flex-direction:column;overflow:hidden}
+.tabs{display:flex;background:var(--surface);border-bottom:1px solid var(--border)}
+.tab{
+  padding:12px 20px;font-size:12px;font-weight:500;cursor:pointer;
+  color:var(--muted);border-bottom:2px solid transparent;transition:all .15s;
+}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.panel{display:none;flex:1;overflow:hidden}
+.panel.active{display:flex;flex-direction:column}
+
+/* ── DASHBOARD ── */
+.dashboard{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:20px}
+.stat-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.stat-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  padding:14px 16px;border-top:3px solid var(--card-color,var(--border));
+}
+.stat-card .label{font-size:11px;color:var(--muted);margin-bottom:6px}
+.stat-card .value{font-family:var(--mono);font-size:24px;font-weight:600;color:var(--card-color,var(--text))}
+.stat-card .sub{font-size:10px;color:var(--muted);margin-top:4px}
+
+.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.chart-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;
+}
+.chart-card h3{font-size:11px;font-weight:500;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;margin-bottom:14px}
+.chart-wrap{position:relative;height:200px}
+
+.lists-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.list-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;
+}
+.list-card h3{font-size:11px;font-weight:500;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;margin-bottom:12px}
+.rank-item{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)}
+.rank-item:last-child{border-bottom:none}
+.rank-num{font-family:var(--mono);font-size:10px;color:var(--muted);width:18px;text-align:right;flex-shrink:0}
+.rank-bar-wrap{flex:1;position:relative;height:18px;background:var(--surface2);border-radius:3px;overflow:hidden}
+.rank-bar{height:100%;border-radius:3px;transition:width .4s ease}
+.rank-label{
+  position:absolute;left:6px;top:50%;transform:translateY(-50%);
+  font-family:var(--mono);font-size:10px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 40px);
+}
+.rank-count{font-family:var(--mono);font-size:10px;color:var(--muted);flex-shrink:0}
+
+/* ── EVENT LIST ── */
+.event-panel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.event-toolbar{
+  padding:10px 16px;display:flex;align-items:center;gap:10px;
+  background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap;
+}
+.ev-count{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto}
+.event-list{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:5px}
+
+.event-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:7px;
+  padding:10px 12px;cursor:pointer;transition:border-color .15s,background .15s;
+  position:relative;padding-left:16px;
+}
+.event-card::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:var(--ev-color,var(--border2));border-radius:7px 0 0 7px;
+}
+.event-card:hover{border-color:var(--border2);background:var(--surface2)}
+.ev-header{display:flex;align-items:center;gap:8px;min-width:0}
+.ev-badge{
+  font-family:var(--mono);font-size:9px;font-weight:600;
+  padding:2px 6px;border-radius:3px;white-space:nowrap;flex-shrink:0;letter-spacing:.3px;
+}
+.ev-time{font-family:var(--mono);font-size:10px;color:var(--muted);flex-shrink:0}
+.ev-msg{flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ev-ip{font-family:var(--mono);font-size:10px;color:var(--muted);flex-shrink:0}
+.ev-arrow{color:var(--muted);font-size:10px;flex-shrink:0;transition:transform .15s}
+.event-card.open .ev-arrow{transform:rotate(90deg)}
+.ev-body{display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.event-card.open .ev-body{display:block}
+.detail-grid{display:grid;grid-template-columns:130px 1fr;gap:3px 10px}
+.dk{font-family:var(--mono);font-size:10px;color:var(--muted);padding:3px 0;align-self:start}
+.dv{font-family:var(--mono);font-size:10px;color:var(--text);padding:3px 0;word-break:break-all}
+.dv.cmd-val{
+  background:var(--bg);border:1px solid var(--border2);border-radius:4px;
+  padding:8px 10px;margin-top:2px;white-space:pre-wrap;color:#e8c07a;line-height:1.6;
+}
+.dv.ok{color:var(--accent);font-weight:600}
+.dv.ng{color:var(--danger);font-weight:600}
+.dv.hassh{color:var(--purple)}
+.alg-wrap{display:flex;flex-wrap:wrap;gap:3px;margin-top:3px}
+.alg-tag{font-family:var(--mono);font-size:9px;padding:1px 5px;background:var(--surface2);border:1px solid var(--border2);border-radius:2px;color:var(--muted)}
+
+/* loading / empty */
+.loading{display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-family:var(--mono);font-size:13px;gap:10px}
+.spinner{width:18px;height:18px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--muted);gap:12px}
+.empty-icon{font-size:36px}
+
+/* badge color helpers */
+.b-connect   {background:#1a2d4a;color:var(--info)}
+.b-login_ok  {background:#0d2a1f;color:var(--accent)}
+.b-login_fail{background:#2a0d12;color:var(--danger)}
+.b-cmd       {background:#2a1f0d;color:var(--warn)}
+.b-kex       {background:#1e1a2a;color:var(--purple)}
+.b-version   {background:#1a1a22;color:#888}
+.b-closed    {background:#141414;color:#555}
+.b-other     {background:#1a1f2a;color:var(--muted)}
+
+/* ── SHODAN PANEL ── */
+.shodan-panel{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px}
+.shodan-search-bar{display:flex;gap:10px;align-items:center}
+.shodan-search-bar input{
+  flex:1;background:var(--bg);border:1px solid var(--border2);
+  color:var(--text);font-family:var(--mono);font-size:13px;
+  padding:9px 14px;border-radius:7px;outline:none;transition:border-color .2s;
+}
+.shodan-search-bar input:focus{border-color:var(--accent)}
+.btn-search{
+  background:var(--accent);color:#000;font-family:var(--mono);font-size:12px;font-weight:600;
+  border:none;padding:9px 20px;border-radius:7px;cursor:pointer;transition:opacity .15s;white-space:nowrap;
+}
+.btn-search:hover{opacity:.85}
+.btn-search:disabled{opacity:.4;cursor:not-allowed}
+.ip-quick-list{display:flex;flex-wrap:wrap;gap:6px}
+.ip-badge{
+  font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:4px;
+  background:var(--surface2);border:1px solid var(--border2);color:var(--info);
+  cursor:pointer;transition:all .15s;
+}
+.ip-badge:hover{border-color:var(--info);background:rgba(0,150,255,.08)}
+.shodan-key-warn{
+  background:rgba(255,71,87,.08);border:1px solid rgba(255,71,87,.3);
+  border-radius:8px;padding:12px 16px;font-size:12px;color:var(--danger);
+}
+.shodan-result{display:flex;flex-direction:column;gap:14px}
+.s-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px}
+.s-card h3{font-size:11px;font-weight:500;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;margin-bottom:12px}
+.s-info-grid{display:grid;grid-template-columns:120px 1fr;gap:4px 12px}
+.s-key{font-family:var(--mono);font-size:11px;color:var(--muted);padding:3px 0}
+.s-val{font-family:var(--mono);font-size:11px;color:var(--text);padding:3px 0;word-break:break-all}
+.s-val.accent{color:var(--accent)}
+.s-val.warn{color:var(--warn)}
+.s-val.danger{color:var(--danger)}
+.port-grid{display:flex;flex-wrap:wrap;gap:6px}
+.port-chip{
+  font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:4px;
+  background:var(--surface2);border:1px solid var(--border2);color:var(--info);
+}
+.service-list{display:flex;flex-direction:column;gap:8px}
+.service-item{
+  background:var(--surface2);border:1px solid var(--border2);border-radius:7px;
+  padding:10px 12px;
+}
+.service-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.service-port{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--info)}
+.service-proto{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.service-product{font-family:var(--mono);font-size:11px;color:var(--accent)}
+.service-banner{
+  font-family:var(--mono);font-size:10px;color:var(--muted);
+  background:var(--bg);border:1px solid var(--border);border-radius:4px;
+  padding:6px 8px;white-space:pre-wrap;word-break:break-all;max-height:80px;overflow-y:auto;margin-top:4px;
+}
+.vuln-list{display:flex;flex-direction:column;gap:8px}
+.vuln-item{
+  background:rgba(255,71,87,.05);border:1px solid rgba(255,71,87,.2);
+  border-radius:7px;padding:10px 12px;
+}
+.vuln-header{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.vuln-cve{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--danger)}
+.vuln-cvss{font-family:var(--mono);font-size:11px;color:var(--warn)}
+.vuln-summary{font-size:11px;color:var(--muted);line-height:1.5}
+.tag-list{display:flex;flex-wrap:wrap;gap:5px}
+.s-tag{font-family:var(--mono);font-size:10px;padding:2px 8px;border-radius:3px;background:rgba(167,139,250,.15);border:1px solid rgba(167,139,250,.3);color:var(--purple)}
+
+/* toast */
+.toast{
+  position:fixed;bottom:20px;right:20px;background:var(--surface2);
+  border:1px solid var(--border2);border-radius:8px;padding:10px 16px;
+  font-size:12px;color:var(--text);opacity:0;transition:opacity .3s;pointer-events:none;z-index:999;
+}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="logo">cowrie<span>://</span>log-viewer</div>
+    <div style="margin-left:auto;font-size:11px;color:var(--muted)">ファイルをサイドバーから選択 または ドロップ</div>
+  </div>
+
+  <div class="body">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <!-- Upload -->
+      <div class="sidebar-section">
+        <div class="sidebar-label">ログファイル</div>
+        <div class="upload-zone" id="upload-zone">
+          <div style="font-size:20px;margin-bottom:6px">📂</div>
+          <div>クリックまたはドロップ</div>
+          <div style="font-size:10px;margin-top:3px;color:var(--muted)">NDJSON (.json / .log)</div>
+          <input type="file" id="file-input" accept=".json,.log">
+        </div>
+      </div>
+
+      <!-- Existing files -->
+      {% if filenames %}
+      <div class="sidebar-section" style="padding-bottom:4px">
+        <div class="sidebar-label">サーバー上のファイル</div>
+      </div>
+      <div class="file-list" id="file-list">
+        {% for f in filenames %}
+        <div class="file-item" data-filename="{{ f }}">📄 {{ f }}</div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="sidebar-section">
+        <div style="font-size:11px;color:var(--muted)">logs/ フォルダにファイルを置くとここに表示されます</div>
+      </div>
+      {% endif %}
+
+      <!-- Filters -->
+      <div class="sidebar-section" style="margin-top:auto">
+        <div class="sidebar-label">フィルター</div>
+        <div class="chips" id="filter-chips">
+          <button class="chip active" data-cat="all">ALL</button>
+          <button class="chip" data-cat="connect">接続</button>
+          <button class="chip" data-cat="login_ok">成功</button>
+          <button class="chip" data-cat="login_fail">失敗</button>
+          <button class="chip" data-cat="cmd">CMD</button>
+          <button class="chip" data-cat="kex">KEX</button>
+          <button class="chip" data-cat="closed">切断</button>
+        </div>
+        <div class="search-wrap" style="margin-top:10px">
+          <span class="search-icon">⌕</span>
+          <input type="text" id="search" placeholder="IP / パスワード / コマンド...">
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div class="main">
+      <div class="tabs">
+        <div class="tab active" data-tab="dashboard">📊 ダッシュボード</div>
+        <div class="tab" data-tab="events">📋 イベント一覧</div>
+        <div class="tab" data-tab="shodan">🔍 Shodan 検索</div>
+      </div>
+
+      <!-- DASHBOARD PANEL -->
+      <div class="panel active" id="panel-dashboard">
+        <div class="dashboard" id="dashboard-content">
+          <div class="empty-state">
+            <div class="empty-icon">🔍</div>
+            <div style="font-size:13px;color:var(--muted)">ログファイルを読み込んでください</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- EVENT LIST PANEL -->
+      <div class="panel" id="panel-events">
+        <div class="event-panel">
+          <div class="event-toolbar">
+            <div class="chips" id="inline-chips" style="flex-wrap:nowrap"></div>
+            <span class="ev-count" id="ev-count">— 件</span>
+          </div>
+          <div class="event-list" id="event-list">
+            <div class="empty-state">
+              <div class="empty-icon">📋</div>
+              <div style="font-size:12px;color:var(--muted)">ログファイルを読み込んでください</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- SHODAN PANEL -->
+      <div class="panel" id="panel-shodan">
+        <div class="shodan-panel" id="shodan-content">
+
+          <!-- APIキー未設定警告 (JS で制御) -->
+          <div id="shodan-key-warn" class="shodan-key-warn" style="display:none">
+            ⚠️ <b>SHODAN_API_KEY</b> が未設定です。プロジェクトの <code>.env</code> に追記してサーバーを再起動してください。<br>
+            <span style="font-size:11px;opacity:.7">例: SHODAN_API_KEY=your_key_here</span>
+          </div>
+
+          <!-- 検索バー -->
+          <div class="shodan-search-bar">
+            <input type="text" id="shodan-ip-input" placeholder="IPアドレスを入力 (例: 1.2.3.4)" spellcheck="false">
+            <button class="btn-search" id="shodan-search-btn" onclick="shodanSearch()">検索</button>
+          </div>
+
+          <!-- ログから抽出したIP一覧 -->
+          <div id="shodan-ip-area" style="display:none">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-family:var(--mono)">ログ内のIPをクリックして検索:</div>
+            <div class="ip-quick-list" id="shodan-ip-list"></div>
+          </div>
+
+          <!-- 結果エリア -->
+          <div id="shodan-result-area"></div>
+        </div>
+      </div>
+
+    </div><!-- /.main -->
+  </div><!-- /.body -->
+</div><!-- /.app -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── state ──────────────────────────────────────────────────────
+let allEvents = [];
+let stats = {};
+let activeFilter = 'all';
+let searchQuery = '';
+let charts = {};
+
+// ── helpers ───────────────────────────────────────────────────
+const CAT_LABEL = {
+  connect:'CONNECT', login_ok:'LOGIN OK', login_fail:'FAIL',
+  cmd:'CMD', kex:'KEX', version:'VER', closed:'CLOSE', other:'EVT'
+};
+const CAT_COLOR = {
+  connect:'#0096ff', login_ok:'#00d4aa', login_fail:'#ff4757',
+  cmd:'#ffb347', kex:'#a78bfa', version:'#555', closed:'#444', other:'#334'
+};
+
+function fmtTime(ts) {
+  if (!ts) return '';
+  try {
+    const d = new Date(ts);
+    return d.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  } catch { return ts.substring(11,19) || ''; }
+}
+
+function toast(msg, color='var(--accent)') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.borderLeftColor = color;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ── tabs ──────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// ── filters ───────────────────────────────────────────────────
+function setupFilterChips(container, inline=false) {
+  if (inline) {
+    const cats = ['all','connect','login_ok','login_fail','cmd','kex','closed'];
+    container.innerHTML = cats.map(c =>
+      `<button class="chip${activeFilter===c?' active':''}" data-cat="${c}">${c==='all'?'ALL':CAT_LABEL[c]}</button>`
+    ).join('');
+  }
+  container.querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      activeFilter = chip.dataset.cat;
+      document.querySelectorAll('.chip').forEach(c => {
+        if(c.dataset.cat === activeFilter) c.classList.add('active');
+        else c.classList.remove('active');
+      });
+      renderEventList();
+    });
+  });
+}
+setupFilterChips(document.getElementById('filter-chips'));
+setupFilterChips(document.getElementById('inline-chips'), true);
+
+document.getElementById('search').addEventListener('input', e => {
+  searchQuery = e.target.value.toLowerCase();
+  renderEventList();
+});
+
+// ── event card ────────────────────────────────────────────────
+function makeEventCard(ev) {
+  const cat = ev._cat || 'other';
+  const color = CAT_COLOR[cat] || '#334';
+  const badge = CAT_LABEL[cat] || 'EVT';
+
+  let msg = '';
+  if (cat === 'login_ok')   msg = `<span style="color:var(--accent)">${ev.username||'?'}</span> / <b style="color:var(--accent)">${ev.password||''}</b>`;
+  else if (cat === 'login_fail') msg = `<span style="color:var(--danger)">${ev.username||'?'}</span> / <b style="color:var(--danger)">${ev.password||''}</b>`;
+  else if (cat === 'cmd')   msg = (ev.input||'').substring(0,100);
+  else if (cat === 'kex')   msg = `hassh: <span style="color:var(--purple)">${ev.hassh||''}</span>`;
+  else if (cat === 'connect') msg = `→ :${ev.dst_port||2222} [${(ev.session||'').substring(0,8)}]`;
+  else if (cat === 'closed') msg = ev.duration ? `duration: ${ev.duration}s` : (ev.message||'');
+  else msg = ev.version || ev.message || ev.eventid || '';
+
+  // detail rows
+  const rows = [];
+  const add = (k,v,cls='') => v!=null && v!=='' ? rows.push(`<div class="dk">${k}</div><div class="dv ${cls}">${v}</div>`) : null;
+  add('event_id', ev.eventid);
+  add('timestamp', ev.timestamp);
+  if(ev.src_ip) add('src', `${ev.src_ip}:${ev.src_port||''}`);
+  if(ev.session) add('session', ev.session);
+  if(cat==='login_ok'||cat==='login_fail'){
+    add('username', ev.username);
+    add('password', ev.password, cat==='login_ok'?'ok':'ng');
+  }
+  if(ev.version) add('version', ev.version);
+  if(ev.hassh) add('hassh', ev.hassh, 'hassh');
+  if(ev.kexAlgs?.length) rows.push(`<div class="dk">kex_algs</div><div class="dv"><div class="alg-wrap">${ev.kexAlgs.map(a=>`<span class="alg-tag">${a}</span>`).join('')}</div></div>`);
+  if(ev.keyAlgs?.length) rows.push(`<div class="dk">key_algs</div><div class="dv"><div class="alg-wrap">${ev.keyAlgs.map(a=>`<span class="alg-tag">${a}</span>`).join('')}</div></div>`);
+  if(ev.encCS?.length)   rows.push(`<div class="dk">enc_algs</div><div class="dv"><div class="alg-wrap">${ev.encCS.map(a=>`<span class="alg-tag">${a}</span>`).join('')}</div></div>`);
+  if(ev.input) rows.push(`<div class="dk">command</div><div class="dv cmd-val">${escHtml(ev.input)}</div>`);
+  if(ev.arch) add('arch', ev.arch);
+  if(ev.width) add('terminal', `${ev.width}×${ev.height}`);
+  if(ev.duration) add('duration', `${ev.duration}s`);
+
+  const div = document.createElement('div');
+  div.className = 'event-card';
+  div.style.setProperty('--ev-color', color);
+  div.innerHTML = `
+    <div class="ev-header">
+      <span class="ev-badge b-${cat}">${badge}</span>
+      <span class="ev-time">${fmtTime(ev.timestamp)}</span>
+      <div class="ev-msg">${msg}</div>
+      <span class="ev-ip">${ev.src_ip||''}</span>
+      <span class="ev-arrow">▶</span>
+    </div>
+    <div class="ev-body">
+      <div class="detail-grid">${rows.join('')}</div>
+    </div>`;
+  div.addEventListener('click', () => div.classList.toggle('open'));
+  return div;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderEventList() {
+  const filtered = allEvents.filter(ev => {
+    if (activeFilter !== 'all' && ev._cat !== activeFilter) return false;
+    if (searchQuery) {
+      return JSON.stringify(ev).toLowerCase().includes(searchQuery);
+    }
+    return true;
+  });
+  const list = document.getElementById('event-list');
+  list.innerHTML = '';
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-icon">🔎</div><div style="font-size:12px;color:var(--muted)">該当なし</div></div>';
+  } else {
+    const frag = document.createDocumentFragment();
+    filtered.forEach(ev => frag.appendChild(makeEventCard(ev)));
+    list.appendChild(frag);
+  }
+  document.getElementById('ev-count').textContent = `${filtered.length.toLocaleString()} 件`;
+  // sync inline chips
+  document.querySelectorAll('#inline-chips .chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.cat === activeFilter);
+  });
+}
+
+// ── dashboard ─────────────────────────────────────────────────
+function destroyCharts() {
+  Object.values(charts).forEach(c => c.destroy());
+  charts = {};
+}
+
+function renderDashboard() {
+  destroyCharts();
+  const s = stats;
+  const dc = document.getElementById('dashboard-content');
+  dc.innerHTML = `
+    <!-- stat cards -->
+    <div class="stat-grid">
+      <div class="stat-card" style="--card-color:var(--text)">
+        <div class="label">イベント総数</div>
+        <div class="value">${s.total.toLocaleString()}</div>
+      </div>
+      <div class="stat-card" style="--card-color:var(--info)">
+        <div class="label">セッション</div>
+        <div class="value">${s.sessions.toLocaleString()}</div>
+      </div>
+      <div class="stat-card" style="--card-color:var(--accent)">
+        <div class="label">ログイン成功</div>
+        <div class="value">${s.login_ok.toLocaleString()}</div>
+        <div class="sub">成功率 ${s.login_ok+s.login_fail>0?((s.login_ok/(s.login_ok+s.login_fail)*100).toFixed(1)):'0'}%</div>
+      </div>
+      <div class="stat-card" style="--card-color:var(--danger)">
+        <div class="label">ログイン失敗</div>
+        <div class="value">${s.login_fail.toLocaleString()}</div>
+      </div>
+      <div class="stat-card" style="--card-color:var(--warn)">
+        <div class="label">コマンド実行</div>
+        <div class="value">${s.cmd_count.toLocaleString()}</div>
+      </div>
+    </div>
+
+    <!-- charts row -->
+    <div class="charts-row">
+      <div class="chart-card">
+        <h3>時間帯別アクティビティ</h3>
+        <div class="chart-wrap"><canvas id="chart-hourly"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>イベント種別</h3>
+        <div class="chart-wrap"><canvas id="chart-types"></canvas></div>
+      </div>
+    </div>
+
+    <!-- lists row -->
+    <div class="lists-row">
+      <div class="list-card">
+        <h3>🌐 接続元 IP TOP10</h3>
+        <div id="list-ips"></div>
+      </div>
+      <div class="list-card">
+        <h3>🔑 試行パスワード TOP10</h3>
+        <div id="list-passwords"></div>
+      </div>
+      <div class="list-card">
+        <h3>💻 SSH クライアント</h3>
+        <div id="list-versions"></div>
+      </div>
+    </div>
+  `;
+
+  // hourly chart
+  const hourlyCtx = document.getElementById('chart-hourly').getContext('2d');
+  charts.hourly = new Chart(hourlyCtx, {
+    type: 'bar',
+    data: {
+      labels: Array.from({length:24}, (_,i) => `${String(i).padStart(2,'0')}h`),
+      datasets: [{
+        data: s.hourly,
+        backgroundColor: s.hourly.map(v => v === Math.max(...s.hourly) ? '#00d4aa' : '#1e2d3d'),
+        borderRadius: 3,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color:'#4a6278', font:{size:9,family:'JetBrains Mono'} }, grid:{color:'#1e2d3d'} },
+        y: { ticks: { color:'#4a6278', font:{size:9,family:'JetBrains Mono'} }, grid:{color:'#1e2d3d'} }
+      }
+    }
+  });
+
+  // event type donut
+  const typeCounts = {};
+  allEvents.forEach(ev => { typeCounts[ev._cat] = (typeCounts[ev._cat]||0)+1; });
+  const typeColors = { connect:'#0096ff', login_ok:'#00d4aa', login_fail:'#ff4757', cmd:'#ffb347', kex:'#a78bfa', version:'#4a6278', closed:'#243347', other:'#1e2d3d' };
+  const typeLabels = { connect:'接続', login_ok:'ログイン成功', login_fail:'ログイン失敗', cmd:'CMD', kex:'KEX', version:'バージョン', closed:'切断', other:'その他' };
+  const typeEntries = Object.entries(typeCounts).sort((a,b)=>b[1]-a[1]);
+
+  const donutCtx = document.getElementById('chart-types').getContext('2d');
+  charts.types = new Chart(donutCtx, {
+    type: 'doughnut',
+    data: {
+      labels: typeEntries.map(([k]) => typeLabels[k]||k),
+      datasets: [{
+        data: typeEntries.map(([,v])=>v),
+        backgroundColor: typeEntries.map(([k])=>typeColors[k]||'#1e2d3d'),
+        borderWidth: 0, hoverOffset: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '65%',
+      plugins: {
+        legend: {
+          position:'right',
+          labels: { color:'#cdd6e0', font:{size:10,family:'JetBrains Mono'}, boxWidth:10, padding:8 }
+        }
+      }
+    }
+  });
+
+  // rank lists
+  function renderRankList(containerId, items, color) {
+    const max = items[0]?.[1] || 1;
+    document.getElementById(containerId).innerHTML = items.map(([label, count], i) =>
+      `<div class="rank-item">
+        <span class="rank-num">${i+1}</span>
+        <div class="rank-bar-wrap">
+          <div class="rank-bar" style="width:${Math.round(count/max*100)}%;background:${color}22"></div>
+          <span class="rank-label" style="color:${color}">${escHtml(label)}</span>
+        </div>
+        <span class="rank-count">${count}</span>
+      </div>`
+    ).join('');
+  }
+
+  renderRankList('list-ips', s.top_ips, '#0096ff');
+  renderRankList('list-passwords', s.top_passwords, '#ff4757');
+  renderRankList('list-versions', s.top_versions, '#a78bfa');
+}
+
+// ── load data ─────────────────────────────────────────────────
+function loadData(data) {
+  allEvents = data.events || [];
+  stats = data.stats || {};
+  renderDashboard();
+  renderEventList();
+  setupFilterChips(document.getElementById('inline-chips'), true);
+  toast(`✓ ${allEvents.length.toLocaleString()} イベントを読み込みました`);
+}
+
+function showLoading(container) {
+  container.innerHTML = '<div class="loading"><div class="spinner"></div>読み込み中...</div>';
+}
+
+// server-side file click
+document.querySelectorAll('.file-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.file-item').forEach(f => f.classList.remove('active'));
+    item.classList.add('active');
+    showLoading(document.getElementById('dashboard-content'));
+    fetch('/api/load', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({filename: item.dataset.filename})
+    }).then(r=>r.json()).then(loadData).catch(e=>toast('エラー: '+e,'var(--danger)'));
+  });
+});
+
+// upload
+const zone = document.getElementById('upload-zone');
+const fi   = document.getElementById('file-input');
+zone.addEventListener('click', ()=>fi.click());
+zone.addEventListener('dragover', e=>{e.preventDefault();zone.classList.add('drag')});
+zone.addEventListener('dragleave', ()=>zone.classList.remove('drag'));
+zone.addEventListener('drop', e=>{
+  e.preventDefault();zone.classList.remove('drag');
+  handleFile(e.dataTransfer.files[0]);
+});
+fi.addEventListener('change', ()=>handleFile(fi.files[0]));
+
+function handleFile(file) {
+  if (!file) return;
+  showLoading(document.getElementById('dashboard-content'));
+  const fd = new FormData();
+  fd.append('file', file);
+  fetch('/api/upload', {method:'POST', body:fd})
+    .then(r=>r.json()).then(loadData)
+    .catch(e=>toast('エラー: '+e,'var(--danger)'));
+}
+
+// ── SHODAN ────────────────────────────────────────────────────
+let shodanConfigured = false;
+
+// タブ切り替え時にShodanステータス確認
+document.querySelector('[data-tab="shodan"]').addEventListener('click', () => {
+  fetch('/api/shodan/status').then(r=>r.json()).then(d => {
+    shodanConfigured = d.configured;
+    document.getElementById('shodan-key-warn').style.display = d.configured ? 'none' : 'block';
+    document.getElementById('shodan-search-btn').disabled = !d.configured;
+  });
+  // ログ読込済みならIP一覧を表示
+  refreshShodanIpList();
+});
+
+function refreshShodanIpList() {
+  const ips = [...new Set(allEvents.map(e=>e.src_ip).filter(Boolean))];
+  const area = document.getElementById('shodan-ip-area');
+  const list = document.getElementById('shodan-ip-list');
+  if (!ips.length) { area.style.display='none'; return; }
+  area.style.display = 'block';
+  list.innerHTML = ips.map(ip =>
+    `<span class="ip-badge" onclick="shodanSearchIp('${ip}')">${ip}</span>`
+  ).join('');
+}
+
+function shodanSearchIp(ip) {
+  document.getElementById('shodan-ip-input').value = ip;
+  shodanSearch();
+}
+
+function shodanSearch() {
+  const ip = document.getElementById('shodan-ip-input').value.trim();
+  if (!ip) return;
+  const area = document.getElementById('shodan-result-area');
+  area.innerHTML = '<div class="loading"><div class="spinner"></div>Shodan 検索中...</div>';
+  fetch('/api/shodan/lookup', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ip})
+  })
+  .then(r => r.json().then(d => ({ok: r.ok, d})))
+  .then(({ok, d}) => {
+    if (!ok) { area.innerHTML = `<div class="shodan-key-warn">❌ ${escHtml(d.error)}</div>`; return; }
+    renderShodanResult(d);
+  })
+  .catch(e => { area.innerHTML = `<div class="shodan-key-warn">❌ ${e}</div>`; });
+}
+
+// Enterキーで検索
+document.getElementById('shodan-ip-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') shodanSearch();
+});
+
+function renderShodanResult(h) {
+  const area = document.getElementById('shodan-result-area');
+
+  // ── 基本情報 ──
+  const tags = (h.tags||[]).map(t=>`<span class="s-tag">${escHtml(t)}</span>`).join('');
+  const hostnames = h.hostnames?.length ? h.hostnames.join(', ') : '—';
+  const riskClass = h.vulns && Object.keys(h.vulns).length > 0 ? 'danger' : 'accent';
+  const riskLabel = h.vulns && Object.keys(h.vulns).length > 0
+    ? `⚠️ ${Object.keys(h.vulns).length} 件の CVE` : '問題なし';
+
+  // ── ポート ──
+  const portChips = (h.ports||[]).map(p=>`<span class="port-chip">${p}</span>`).join('');
+
+  // ── サービス ──
+  const svcHtml = (h.services||[]).map(s => {
+    const vulnBadges = s.vulns ? s.vulns.map(v=>`<span class="s-tag" style="background:rgba(255,71,87,.15);border-color:rgba(255,71,87,.3);color:var(--danger)">${escHtml(v)}</span>`).join('') : '';
+    return `<div class="service-item">
+      <div class="service-header">
+        <span class="service-port">${s.port}</span>
+        <span class="service-proto">${s.transport}</span>
+        ${s.product ? `<span class="service-product">${escHtml(s.product)} ${escHtml(s.version||'')}</span>` : ''}
+        ${vulnBadges}
+      </div>
+      ${s.banner ? `<div class="service-banner">${escHtml(s.banner)}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  // ── CVE ──
+  const vulnHtml = Object.entries(h.vulns||{}).length
+    ? Object.entries(h.vulns).sort((a,b)=>(b[1].cvss||0)-(a[1].cvss||0)).map(([cve, info]) => `
+      <div class="vuln-item">
+        <div class="vuln-header">
+          <span class="vuln-cve">${escHtml(cve)}</span>
+          ${info.cvss ? `<span class="vuln-cvss">CVSS ${info.cvss}</span>` : ''}
+        </div>
+        ${info.summary ? `<div class="vuln-summary">${escHtml(info.summary)}</div>` : ''}
+      </div>`).join('')
+    : '<div style="font-size:12px;color:var(--muted)">CVEは検出されませんでした</div>';
+
+  area.innerHTML = `
+    <div class="shodan-result">
+
+      <!-- 基本情報 -->
+      <div class="s-card">
+        <h3>🌐 基本情報 — ${escHtml(h.ip)}</h3>
+        <div class="s-info-grid">
+          <div class="s-key">組織 / ASN</div>
+          <div class="s-val accent">${escHtml(h.org||'—')} <span style="color:var(--muted)">${escHtml(h.asn||'')}</span></div>
+          <div class="s-key">ISP</div>
+          <div class="s-val">${escHtml(h.isp||'—')}</div>
+          <div class="s-key">国 / 都市</div>
+          <div class="s-val">${escHtml(h.country||'—')} ${escHtml(h.city||'')}</div>
+          <div class="s-key">OS</div>
+          <div class="s-val">${escHtml(h.os||'不明')}</div>
+          <div class="s-key">ホスト名</div>
+          <div class="s-val" style="color:var(--muted)">${escHtml(hostnames)}</div>
+          <div class="s-key">脆弱性</div>
+          <div class="s-val ${riskClass}">${riskLabel}</div>
+          <div class="s-key">最終更新</div>
+          <div class="s-val" style="color:var(--muted)">${escHtml(h.last_update||'—')}</div>
+        </div>
+        ${tags ? `<div class="tag-list" style="margin-top:12px">${tags}</div>` : ''}
+      </div>
+
+      <!-- 開放ポート -->
+      <div class="s-card">
+        <h3>🔌 開放ポート (${(h.ports||[]).length})</h3>
+        <div class="port-grid">${portChips || '<span style="color:var(--muted);font-size:12px">なし</span>'}</div>
+      </div>
+
+      <!-- サービス詳細 -->
+      ${h.services?.length ? `
+      <div class="s-card">
+        <h3>⚙️ サービス詳細</h3>
+        <div class="service-list">${svcHtml}</div>
+      </div>` : ''}
+
+      <!-- CVE -->
+      <div class="s-card">
+        <h3>🛡️ CVE / 脆弱性</h3>
+        <div class="vuln-list">${vulnHtml}</div>
+      </div>
+
+    </div>`;
+}
+</script>
+</body>
+</html>
